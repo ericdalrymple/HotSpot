@@ -1,0 +1,208 @@
+
+
+
+CODING SAMPLE
+
+
+
+This goal of this coding sample is to get a sense of how you approach a
+moderately sized software engineering task.  The code you write should be
+as detailed as possible and demonstrate an understanding of the problem and
+its solution.  Try to keep it simple, clean, and extensible, while paying
+attention towards effeciency and error handling.
+
+Please include a short (paragraph or two) description of your code and talk
+about any further enhancements that might be possible.  You also might want to
+describe alternative systems you came up with yet discarded.
+
+The coding sample takes place within the (simplified) context of Turbine's
+server-side game systems code.  You'll notice some technical terms in the
+description of the task (the two most important being Entity and message).
+These terms will be explained below.  Be sure to read everything before
+proceeding.
+
+You may implement this coding sample in an approved language of your choice.  
+Approved languages include C++, Objective C, C#, and Java.
+
+INSTRUCTIONS
+
+
+
+Implement the HotSpot class.  A HotSpot is a kind of Entity that is designed
+to periodically damage or heal other objects that are colliding with it.
+Examples include: a campfire, a pool of acid, a patch of frigid air, a
+mana-renewing cloud of vapor, etc.  HotSpots are all ethereal - that means
+that other objects can move right through them.  Physics will tell a HotSpot
+when an object first collides with it and when an object finally stops
+colliding with it (because the object walked out of it, logged out, or
+teleported away, etc.).  HotSpot should rely on overriding methods of
+Entity to implement its behavior.
+
+
+At a minimum, a HotSpot should meet the following requirements: 
+
+. Keep track of all the objects currently colliding with it.
+. Have an EffectType.
+. Be able to inflict a range of damage (or healing) - with some random
+  variance.
+. Have a rate at which it affects objects colliding with it
+
+
+Feel free to add whatever data members you desire to the HotSpot class.  The
+exact data structure you use for keeping track of colliding objects is up to
+you.  Be sure to consider what's most efficient (in terms of memory, access
+times, etc).
+
+Think about possible error conditions and handle them as best you can.
+
+Think about what kinds of entities you want HotSpots to be able to affect.
+
+Think about exactly when you want a HotSpot to affect its targets.  What
+options are there?  What do you think makes the most sense from a gameplay
+perspective?
+
+Imagine that this class is going to be used by content integrators to
+populate their dungeons.  All they can tweak are the values of the data
+members of your class.  You want to give them a reasonable amount of
+flexibility.
+
+There are many possible ways to implement the HotSpot class.  Simply code
+it *a* way.  You should be able to get some interesting behavior in a
+couple pages worth of code and a couple different messages.  Talk about why
+you designed it the way you did.
+
+Your Hotspot class will be derived (subclassed) from the Entity class.
+
+
+
+ENTITY
+
+
+
+Every interactable object in the game is an instance of an Entity (or an instance of
+a subclass of Entity): arrows, coins, doors, players, creatures, shields,
+swords, traps, fireballs, corpses, chests, etc.
+
+An Entity has many more datamembers and methods on it than are described
+here, but these are enough for the task at hand.  You shouldn't have to write
+any code to Entity itself.  You can assume it contains all the data and
+methods that any generic object would need.
+
+Here are the public methods of the Entity class.  You may extend any of these
+methods in the Hotspot class (all these methods should be treated as if they
+were "virtual") unless specified otherwise.
+
+final InstanceID GetID(): Returns the unique InstanceID of the entity.
+
+void EnterWorld(): This method is called whenever an entity enters the game world.
+This usually happens only once right after it is first created.
+
+void ExitWorld(): This method is called whenever an entity leaves the game world.
+This usually happens only once right before it is destroyed.
+
+void HandleCollision( Entity object ): This method is called by physics system whenever 
+an entity collides with another entity. The parameter passed in is the other entity involved 
+in the collision.
+
+void HandleCollisionEnd( Entity object ): This method is called by the physics system 
+whenever an entity stops colliding with another entity. The parameter passed in is the other
+entity involved in the collision.
+
+void Affect( EffectType type, int amount ): Call this method to inflict damage on an entity 
+or to boost its health, stamina, or mana. Pass in the type of effect damage and the intensity.
+A negative amount will lower the stat while a positive amount will raise  the stat (see notes 
+above about effect types). The Affect method handles most everything that needs to be handled 
+when adjusting vital stats (eg., making sure health stays within bounds, causing death when 
+appropriate, etc.)
+ 
+bool IsPlayer(): Returns true if the entity is a player.
+
+bool IsAI(): Returns true if the entity is an AI.
+
+bool IsCreature(): Returns true if the entity is a creature (both AIs and players are
+considered creatures, but a sword or door isn't).
+
+bool IsItem(): Returns true if the entity is an item. Anything that is not a creature is
+considered an item.
+
+
+
+MESSAGES
+
+
+
+There's one more important piece of information you'll need to complete this
+task.  All game systems use messages for inter-object or time-delayed
+communication.  The message system is just a way for sending blobs of data to
+particular methods on particular entities at a particular time.  Except in
+rare cases (and this task is not one of them!), entities should *not* store
+references to other objects.  Instead they keep track of InstanceIDs and send
+messages to those ids.  If you're given a reference via another method (like
+HandleCollision) you can use it only during that call (ie. you can't store it
+in a datamember of HotSpot).
+
+
+A generic message template:
+
+
+bool Send<MethodName>Message( InstanceID target, 
+                              < param1, param2, param3, ... >, 
+                              double time = -1.0 );
+
+
+target: The intended receiver of the message
+
+time: The absolute server time at which you want the message
+delivered. It's a default parameter so if you don't specify a time the
+message will be delivered as soon as possible.
+
+return value: True if the message is sent successfully. If the target
+doesn't exist, for example, then it will return false.
+
+
+An example of what a particular message's API might look like:
+
+
+bool SendAffectMessage( InstanceID target, 
+                        EffectType type, int intensity,
+                        double time = -1.0 );
+
+
+For the purposes of this coding sample, this will magically ship the type
+and intensity params to the target entity, and call Affect( type, intensity
+) on it.  The message will arrive at the time specified.  If no time is
+specified then it'll arrive as soon as possible.  Note: The message is
+always queued up - so it will not happen in the same stack frame as the one
+in which it was sent.
+
+It's also sometimes useful to send a message to yourself at some time in
+the future.  You can even create periodic message loops to trigger actions
+at regular intervals.
+
+You don't have to implement the message passing code! Just declare the new
+messages you'll need as stub methods.  Pretend that once they're called
+message will get queued up, eventually calling the appropriate method on the
+target entity, with the correct params, at the time you specify.
+
+
+
+OTHER INFORMATION YOU MAY NEED
+
+- Every instantiated entity in the game has a unique InstanceID.  The global constant
+value Invalid_IID can be used to represent an uninitialized (therefore invalid)
+InstanceID.
+
+- You can access the current server time at any time via the static GetTime method 
+of the Timer class. This returns the current server time in seconds (it just starts 
+at zero and keeps counting up).
+
+That should be all the background information you'll need to get started.
+
+
+Good luck!
+
+
+
+
+
+
