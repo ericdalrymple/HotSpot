@@ -45,6 +45,7 @@
   <ItemGroup>
     <Compile Include="Definitions.cs" />
     <Compile Include="Entity.cs" />
+    <Compile Include="GameSystem.cs" />
     <Compile Include="HotSpot.cs" />
     <Compile Include="HotSpotTester.cs" />
     <Compile Include="InstanceID.cs" />

@@ -51,6 +51,26 @@ public class InstanceID
         return !(a == b);
     }
 
+    public static bool operator ==( int a, InstanceID b )
+    {
+        return (a == b.m_ID);
+    }
+
+    public static bool operator !=( int a, InstanceID b )
+    {
+        return !(a == b);
+    }
+
+    public static bool operator ==( InstanceID a, int b )
+    {
+        return (a.m_ID == b);
+    }
+
+    public static bool operator !=( InstanceID a, int b )
+    {
+        return !(a == b);
+    }
+
     //
     //-- Body
     //
@@ -58,7 +78,17 @@ public class InstanceID
     {
         m_ID = s_MaxID++;
     }
-    
+
+    public override string ToString()
+    {
+        return m_ID.ToString();
+    }
+
+    public override int GetHashCode()
+    {
+        return m_ID;
+    }
+
     public override bool Equals( object obj )
     {
         if( obj is InstanceID )
@@ -74,9 +104,9 @@ public class InstanceID
         return (m_ID == other.m_ID);
     }
 
-    public override int GetHashCode()
+    public bool Equals( int other )
     {
-        return m_ID;
+        return (m_ID == other);
     }
 }
 

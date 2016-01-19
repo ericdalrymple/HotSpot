@@ -9,15 +9,17 @@
 public enum EntityType
 : int
 {
-    Item     = 0x00,    //-- Can be anything
-    Player   = 0x01,    //-- In-game entity representing a player
-    AI       = 0x02,    //-- In-game entity representing an NPC
-    Creature = 0x04,    //-- In-game entity representing a creature other than a player or an AI
+      Item = 0   //-- Can be anything
+    , Player     //-- In-game entity representing a player
+    , AI         //-- In-game entity representing an NPC
+    , Creature   //-- In-game entity representing a creature other than a player or an AI
 }
 
 /// <summary>
 /// Every interactable object in the game is an instance of an
-/// Entity (or an instance of a subclass of Entity)
+/// Entity (or an instance of a subclass of Entity). This class is an
+/// approxiamtion of an ENTITY as described in the test instructions for
+/// use in testing.
 /// </summary>
 public abstract class Entity
 {
@@ -65,7 +67,7 @@ public abstract class Entity
 
     public bool IsItem()
     {
-        return (EntityType.Item == m_Type);
+        return (EntityType.Item == m_Type) || !IsCreature();
     }
 
     public InstanceID GetID()
