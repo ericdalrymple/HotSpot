@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -6,27 +7,25 @@ using System.Linq;
 /// 
 /// OVERVIEW:
 /// 
-///   This HotSpot uses a HashSet of InstanceIDs to track its colliders to benifit from HashSet's
-///   efficient Insert, Remove and Check operations in addition to automatic guarding against duplicate
-///   entries. All valid colliding entities are added to the 'm_CollidingEntities' HashSet upon collision
-///   and removed from it upon collision end.
+///   Using a List as a target pool in order to use index access for targets O(1).
 ///   
-///   When another entity collides with a HotSpot and the HotSpot is configured to affect entities of that
-///   type, then the HotSpot computes the time at which it would first affect that entity (according to
-///   its settings) and schedules that target as a "job" in the HotSpot's job collection.
+///   Using a Queue to keep track of free spots in the target pool as they become free so that
+///   new targets don't need to seek the pool for free spots.
 ///   
-///   A "job" is basically a linked list of targets and the "job collection" is a sorted dictionary of jobs
-///   where the keys are the scheduled time for each job. If two targets need to be affected at the same
-///   time, then they would be assigned to the same job.  If not for the initial time delay feature (read
-///   below), the job collection could have been a queue as opposed to a sorted dictionary. However it is
-///   possible for a job being scheduled 
+///   Using a Dictionary to map Entity instance IDs to pool indices so that we can clear
+///   a pool slot in O(log n) instead of O(n) on 'HandleCollisionEnd'. There is one entry
+///   in the map for every active HotSpot target.
 ///   
+///   No polling. The affecting of targets is event based.
+/// 
 /// 
 /// ASSUMPTIONS:
 /// 
 ///   - An assumption has been made that 'HandleCollision' will not get called twice for the same collider
 ///     unless there has been a call to 'HandleCollisionEnd' for that collider in between.
 /// 
+///   - Assuming that the SendMessage calls are not blocking event when specifying a time in the future.
+///   
 /// 
 /// FEATURES:
 /// 
@@ -76,7 +75,7 @@ using System.Linq;
 /// 
 /// </summary>
 
-public class HotSpot
+public class HotSpot2
 : Entity
 {
     //
@@ -91,6 +90,8 @@ public class HotSpot
     private struct HotSpotTarget
     {
         public InstanceID TargetEntityID { get; set; }
+        public bool Active { get; set; }
+        public bool Scheduled { get; set; }
         public int AffectationCount { get; set; }
     }
 
@@ -122,19 +123,10 @@ public class HotSpot
     /// Whether this HotSpot is currently active.
     /// </summary>
     private bool m_Active = false;
-
-    /// <summary>
-    /// Collection of all entities currently colliding with this HotSpot. This collection is not particularly
-    /// useful for this specific implementation of HotSpot, but it is nonetheless a requirement for the test.
-    /// </summary>
-    private HashSet<InstanceID> m_CollidingEntities = new HashSet<InstanceID>();
-
-    /// <summary>
-    /// Collection of jobs to be processed by this HotSpot in the form of target lists sorted by time.
-    /// </summary>
-    private SortedDictionary<double, LinkedList<HotSpotTarget>> m_JobCollection = new SortedDictionary<double, LinkedList<HotSpotTarget>>();
-
-
+    
+    private Dictionary<InstanceID, int> m_TargetLookup = new Dictionary<InstanceID, int>();
+    private List<HotSpotTarget> m_TargetPool = new List<HotSpotTarget>();
+    private Queue<int> m_FreeSlots = new Queue<int>();
 
     //
     //-- Body
@@ -147,8 +139,10 @@ public class HotSpot
 
     public override void ExitWorld()
     {
-        //-- Clear all jobs
-        m_JobCollection.Clear();
+        //-- Clear targets
+        m_TargetLookup.Clear();
+        m_TargetPool.Clear();
+        m_FreeSlots.Clear();
 
         //-- Turn off the HotSpot
         m_Active = false;
@@ -172,19 +166,45 @@ public class HotSpot
             //-- Don't accept targets when inactive
             return;
         }
-
-        //-- Track the colliding entity
-        m_CollidingEntities.Add( collider.GetID() );
-
+        
         if( IsAffectedTarget( collider ) )
         {
-            //-- Create a new target to schedule to be affected
-            HotSpotTarget newTarget = new HotSpotTarget();
-            newTarget.TargetEntityID = collider.GetID();
-            newTarget.AffectationCount = 0;
+            int newTargetSlotIndex = -1;
+            if( 0 < m_FreeSlots.Count )
+            {
+                //-- There's an expired target we can use
+                int slotIndex = m_FreeSlots.Dequeue();
 
-            //-- Schedule the new target
-            ScheduleTarget( newTarget, GameSystem.GetTime() + m_InitialDelay );
+                //-- Re-initilize expired target with new data
+                HotSpotTarget target = m_TargetPool[slotIndex];
+                {
+                    target.TargetEntityID = collider.GetID();
+                    target.AffectationCount = 0;
+                    target.Active = true;
+                }
+
+                newTargetSlotIndex = slotIndex;
+            }
+            else
+            {
+                //-- There was no more room in the pool, so grow it. Create a new
+                //   target and append it to the target pool
+                HotSpotTarget newTarget = new HotSpotTarget();
+                newTarget.TargetEntityID = collider.GetID();
+                newTarget.AffectationCount = 0;
+                newTarget.Active = true;
+
+                //-- Add new slot to target pool
+                m_TargetPool.Add( newTarget );
+
+                newTargetSlotIndex = m_TargetPool.Count - 1;
+            }
+
+            //-- Register the new target to our lookup dictionary
+            m_TargetLookup[collider.GetID()] = newTargetSlotIndex;
+
+            //-- Immediately schedule the target to be affected
+            ScheduleTarget( newTargetSlotIndex, GameSystem.GetTime() + m_InitialDelay );
         }
     }
     
@@ -195,14 +215,24 @@ public class HotSpot
             //-- Ignore null targets
             return;
         }
-
-        //-- Track colliding entity
-        m_CollidingEntities.Remove( collider.GetID() );
         
         if( IsAffectedTarget( collider ) )
         {
-            //-- Remove the target from any jobs it might be in
-            RemoveTargetFromJobs( collider.GetID() );
+            //-- Check if this entity is one of our targets
+            int targetSlotIndex = -1;
+            if( m_TargetLookup.TryGetValue( collider.GetID(), out targetSlotIndex ) )
+            {
+                //-- If so, deactivate it
+                HotSpotTarget target = m_TargetPool[targetSlotIndex];
+                target.TargetEntityID = InstanceID.Invalid_IID;
+                target.Active = false;
+
+                //-- And remove the lookup for it
+                m_TargetLookup.Remove( collider.GetID() );
+
+                //-- Keep track of the pool slot we just freed up
+                m_FreeSlots.Enqueue( targetSlotIndex );
+            }
         }
     }
 
@@ -212,7 +242,7 @@ public class HotSpot
     /// targets do not get rescheduled and are thus no longer kept track of by this HotSpot's
     /// job collection.
     /// </summary>
-    public void ProcessJob()
+    public void ProcessTarget( int targetID )
     {
         if( !m_Active )
         {
@@ -220,24 +250,18 @@ public class HotSpot
             return;
         }
 
-        if( 0 == m_JobCollection.Count )
+        if( (0 > targetID) || (targetID <= m_TargetPool.Count) )
         {
-            //-- No jobs to process (unlikely to be reached since this function
-            //   would not be called if there were no jobs)
+            //-- Invalid index
             return;
         }
-
-        //-- Cache the current time
-        double serverTime = GameSystem.GetTime();
-
-        //-- Send a message to the batch of targets in the next job and either reschedule them or discard them
-        KeyValuePair<double, LinkedList<HotSpotTarget>> nextJob = m_JobCollection.First();
-        LinkedListNode<HotSpotTarget> targetIter = nextJob.Value.First;
-        while( null != targetIter )
+        
+        HotSpotTarget target = m_TargetPool[targetID];
+        if( target.Active && target.Scheduled )
         {
-            //-- Cache target reference
-            HotSpotTarget target = targetIter.Value;
-            
+            //-- Unschedule the target
+            target.Scheduled= false;
+
             //-- Resolve the intensity of the effect
             int intensity = RANDOM.Next( m_MinDamage, m_MaxDamage );
 
@@ -250,25 +274,17 @@ public class HotSpot
                 {
                     target.AffectationCount = target.AffectationCount + 1;
                 }
-            }
 
-            //-- Next target in the job
-            targetIter = targetIter.Next;
-        }
-
-        //-- Remove the batch of targets that we've just processed. This gets rid of any targets
-        //   that have not been rescheduled either because they've been dealt all of their hits
-        //   or because they've become unreachable.
-        m_JobCollection.Remove( nextJob.Key );
-
-        //-- Reschedule the targets we just processed if necessary (this needs to be done after the remove
-        //   above to guard against repeat intervals of 0 seconds)
-        foreach( HotSpotTarget target in nextJob.Value )
-        {
-            //-- If the target hasn't reached its maximum hit count, then re-schedule it
-            if( (0 > m_RepeatCount) || (target.AffectationCount < m_RepeatCount) )
-            {
-                ScheduleTarget( target, serverTime + m_RepeatInterval );
+                if( (0 > m_RepeatCount) || (target.AffectationCount < m_RepeatCount) )
+                {
+                    //-- If the target hasn't reached its maximum hit count, then re-schedule it{
+                    ScheduleTarget( targetID, GameSystem.GetTime() + m_RepeatInterval );
+                }
+                else
+                {
+                    //-- Target has reached max hit count, disable it
+                    target.Active = false;
+                }
             }
         }
 
@@ -332,53 +348,19 @@ public class HotSpot
         return false;
     }
 
-    private void RemoveTargetFromJobs( InstanceID targetInstanceID )
+    private void RemoveTarget( int targetSlotIndex )
     {
-        foreach( KeyValuePair<double, LinkedList<HotSpotTarget>> kvp in m_JobCollection )
-        {
-            //-- Iterate over the targets for this job
-            LinkedListNode<HotSpotTarget> targetIter = kvp.Value.First;
-            while( null != targetIter )
-            {
-                if( targetInstanceID == targetIter.Value.TargetEntityID )
-                {
-                    //-- We found the matching target, remove it from the job
-                    kvp.Value.Remove( targetIter );
 
-                    //-- The system is designed in such a way that every unique target
-                    //   is only in the job collection once, so we can stop here
-                    return;
-                }
-
-                //-- Next job target
-                targetIter = targetIter.Next;
-            }
-        }
     }
 
-    private void ScheduleTarget( HotSpotTarget target, double time )
+    private void ScheduleTarget( int targetSlotIndex, double time )
     {
-        bool noTargets = (0 == m_JobCollection.Count);
-
-        //-- Schedule the new target; start by checking if there are any other targets scheduled at the same time
-        LinkedList<HotSpotTarget> simultaneousTargets;
-        bool found = m_JobCollection.TryGetValue( time, out simultaneousTargets );
-        if( !found )
+        HotSpotTarget scheduledTarget = m_TargetPool[targetSlotIndex];
+        if( scheduledTarget.Active && !scheduledTarget.Scheduled )
         {
-            //-- No other targets were registered at that time slot, so let's register a
-            //   new list of targets for that time
-            simultaneousTargets = new LinkedList<HotSpotTarget>();
-            m_JobCollection.Add( time, simultaneousTargets );
-        }
-
-        //-- Add our new target to the list for its time slot
-        simultaneousTargets.AddLast( target );
-
-        //-- If this is the first item to be queued, then we must schedule an
-        //   update to affect it
-        if( noTargets )
-        {
-            GameSystem.SendProcessJobMessage( GetID(), time );
+            //-- Schedule the target for affectation and mark it as scheduled
+            GameSystem.SendProcessTargetMessage( GetID(), targetSlotIndex, time );
+            scheduledTarget.Scheduled = true;
         }
     }
 }

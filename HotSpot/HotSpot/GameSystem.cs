@@ -19,7 +19,7 @@ public static class GameSystem
     //     test instructions.
     //
 
-    public static bool SendAffectMessage( InstanceID target, EffectType type, int intensity, double time = -1.0d )
+    public static bool SendAffectMessage( InstanceID recipient, EffectType type, int intensity, double time = -1.0d )
     {
         Entity targetEntity = null;
 
@@ -32,16 +32,16 @@ public static class GameSystem
         return false;
     }
 
-    public static bool SendProcessJobMessage( InstanceID target, double time = -1.0d )
+    public static bool SendProcessTargetMessage( InstanceID recipient, int targetID, double time = -1.0d )
     {
         Entity targetEntity = null;
 
-        if( s_GameEntities.TryGetValue( target, out targetEntity ) )
+        if( s_GameEntities.TryGetValue( recipient, out targetEntity ) )
         {
             if( targetEntity is HotSpot )
             {
                 HotSpot hs = (HotSpot)targetEntity;
-                hs.ProcessJob();
+                hs.ProcessJob( targetID );
             }
         }
 
