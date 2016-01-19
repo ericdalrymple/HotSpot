@@ -223,15 +223,7 @@ public class HotSpot2
             if( m_TargetLookup.TryGetValue( collider.GetID(), out targetSlotIndex ) )
             {
                 //-- If so, deactivate it
-                HotSpotTarget target = m_TargetPool[targetSlotIndex];
-                target.TargetEntityID = InstanceID.Invalid_IID;
-                target.Active = false;
-
-                //-- And remove the lookup for it
-                m_TargetLookup.Remove( collider.GetID() );
-
-                //-- Keep track of the pool slot we just freed up
-                m_FreeSlots.Enqueue( targetSlotIndex );
+                
             }
         }
     }
@@ -350,7 +342,15 @@ public class HotSpot2
 
     private void RemoveTarget( int targetSlotIndex )
     {
+        HotSpotTarget target = m_TargetPool[targetSlotIndex];
+        target.TargetEntityID = InstanceID.Invalid_IID;
+        target.Active = false;
 
+        //-- And remove the lookup for it
+        m_TargetLookup.Remove( target.GetID() );
+
+        //-- Keep track of the pool slot we just freed up
+        m_FreeSlots.Enqueue( targetSlotIndex );
     }
 
     private void ScheduleTarget( int targetSlotIndex, double time )
